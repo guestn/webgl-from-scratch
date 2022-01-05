@@ -1,0 +1,10 @@
+.DS_Store
+build
+.idea
+.env
+node_modules/
+coverage/**
+dist/
+src/model
+*.iml
+src/static_data/*
