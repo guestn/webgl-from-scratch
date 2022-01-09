@@ -2,6 +2,46 @@ import cube from './primitives/cube.js';
 import torus from './primitives/torus.js';
 import plane from './primitives/plane.js';
 
+import { quat } from glMatrix;
+
+export const rotate = (obj, axis, r) => {
+    const quat = glMatrix.quat.create();
+    glMatrix.quat.setAxisAngle(quat, glMatrix.vec3.fromValues(axis[0], axis[1], axis[2]), r);
+
+    const rObj = new Array(obj.position.length / 3).fill({}).reduce((agg, curr, idx) => {
+        const p = glMatrix.vec3.fromValues(obj.position[idx * 3], obj.position[idx *3 + 1], obj.position[idx * 3 + 2]);
+        const rp = glMatrix.vec3.create();
+        glMatrix.vec3.transformQuat(rp, p, quat)
+
+        const n = glMatrix.vec3.fromValues(obj.normal[idx * 3], obj.normal[idx * 3 + 1], obj.normal[idx * 3 + 2]);
+        const rn = glMatrix.vec3.create();
+        glMatrix.vec3.transformQuat(rn, n, quat)
+
+        return {
+            position: agg.position.concat(...rp),
+            normal: agg.normal.concat(...rn),
+            uv: obj.uv,
+            index: obj.index,
+        }
+    }, { position: [], normal: [], uv: [], index: [] });
+
+    return rObj;
+}
+
+export const translate = (obj, v) => {
+    return {
+        ...obj,
+        position: obj.position.map((p, idx) => (p += v[idx % 3])),
+    }
+}
+
+export const scale = (obj, v) => {
+    return {
+        ...obj,
+        position: obj.position.map((p, idx) => (p *= v[idx % 3])),
+    }
+}
+
 const initialize = async () => {
     console.log('Initializing');
     const dataVertex = await fetch('./vertex.glsl');
@@ -12,19 +52,9 @@ const initialize = async () => {
     //const image = await fetch('./UV_Grid_Sm.png');
     //const imageData = await image.blob();
 
-    console.log({ THREE });
-    const geometry = new THREE.PlaneGeometry(2, 2, 1, 1);
-
-    console.log({
-        position: [...geometry.attributes.position.array],
-        uv: [...geometry.attributes.uv.array],
-        normal: [...geometry.attributes.normal.array],
-        index: [...geometry.index.array],
-    });
-
     const canvas = document.getElementById('glCanvas');
     /** @type {WebGLRenderingContext} */
-    const gl = canvas.getContext('webgl');
+    const gl = canvas.getContext('webgl', {antialias: true});
 
     if (!gl) {
         console.log('WebGL not supported, falling back on experimental-webgl');
@@ -37,7 +67,7 @@ const initialize = async () => {
 
     //gl.viewport(0, 0, 200, 300);
 
-    console.log(`[Canvas internal rendering] W: ${gl.drawingBufferWidth} | H: ${gl.drawingBufferHeight}`);
+    console.info(`[Canvas internal rendering] W: ${gl.drawingBufferWidth} | H: ${gl.drawingBufferHeight}`);
 
     gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
     gl.clearColor(0.85, 0.85, 0.8, 1.0);
@@ -47,8 +77,9 @@ const initialize = async () => {
     gl.frontFace(gl.CCW); // cull in this order
     gl.cullFace(gl.BACK); // cull backface
 
-    const program = createShaders({ gl, vertexText, fragmentText });
-    const { worldMatrix, matWorldLocation, index, texture } = createBuffers({ gl, program });
+    const { program } = createShaders({ gl, vertexText, fragmentText });
+    const { index } = createBuffers({ gl, program });
+    const { worldMatrix, matWorldLocation, texture } = createTexture({gl, program})
     const { angle } = createEventListeners({ x: 0, y: 0 });
     render({ gl, worldMatrix, matWorldLocation, index, texture, angle });
 };
@@ -89,37 +120,35 @@ const createShaders = ({ gl, vertexText, fragmentText }) => {
         console.error('ERROR validating program!', gl.getProgramInfoLog(program));
         return;
     }
-    return program;
+    return { program };
 };
 
 const createBuffers = ({ gl, program }) => {
     //
     // Create buffer
     //
-
-    //const { position, normal, uv, index } = torus;
-
     const identityMatrix = new Float32Array(9);
     glMatrix.mat3.identity(identityMatrix);
 
-    const translate = glMatrix.vec3.fromValues(1, 0, 0);
-    const rotate = glMatrix.mat3.fromRotation(identityMatrix, 1);
-    const cubePos = cube.position.map((p, idx) => (p += translate[idx % 3]));
+    const sCube = scale(cube, [2, 1, 1]);
+    const rCube = rotate(sCube, [0, 0, 1], 1.2);
+    const tCube = translate(rCube, [1, 0.5, 0]);
 
-    const objects = [torus, cube];
+    const sPlane = scale(plane, [5, 5, 5]);
+    const rPlane = rotate(sPlane, [1, 0, 0], glMatrix.glMatrix.toRadian(270));
+    const tPlane = translate(rPlane, [0, -2, 0]);
 
-    //const l = torus.index.length + cube.index.length;
+
+    const objects = [torus, tCube, tPlane];
+
+    // aggregate object params to create ultimately one buffer array
     const { position, normal, uv, index } = objects.reduce(
         (agg, o, idx) => {
-            const l = agg.index.length;
-            console.log({ l });
-            //const
-
             return {
                 position: [...agg.position, ...o.position],
                 normal: [...agg.normal, ...o.normal],
                 uv: [...agg.uv, ...o.uv],
-                index: [...agg.index, ...o.index.map((i) => i + l / 6)],
+                index: [...agg.index, ...o.index.map((i) => (i + agg.position.length / 3))],
             };
         },
         { position: [], normal: [], uv: [], index: [] },
@@ -127,17 +156,7 @@ const createBuffers = ({ gl, program }) => {
 
     console.log({ position, normal, uv, index });
 
-    // const x = new Array(cubePos / 3).fill(0).map((v, idx) => {
-    // 	return glMatrix.vec3.fromValues(cubePos[idx], cubePos[idx+1], cubePos[idx+2]);
-    // })
-    // console.log({ x, rotate });
-
-    const position2 = cube.position.concat(torus.position);
-    const normal2 = cube.normal.concat(torus.normal);
-    const uv2 = cube.uv.concat(torus.uv);
-    const index2 = cube.index.concat(torus.index.map((i) => i + cube.position.length / 3));
-    console.log({ position2, normal2, uv2, index2 });
-
+    // create single buffer array
     const bufferArray = new Array(position.length / 3).fill(0).reduce((agg, curr, idx) => {
         const i = idx * 3;
         return [
@@ -196,7 +215,11 @@ const createBuffers = ({ gl, program }) => {
     gl.enableVertexAttribArray(positionAttribLocation);
     gl.enableVertexAttribArray(texCoordAttribLocation);
     gl.enableVertexAttribArray(normalAttribLocation);
+    
+    return { index };
+}
 
+const createTexture = ({ gl, program }) => {
     // create the tex:
     const texture = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -205,7 +228,7 @@ const createBuffers = ({ gl, program }) => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-    //void gl.texImage2D(target, level, internalformat, width, height, border, format, type, ImageData source);
+    // void gl.texImage2D(target, level, internalformat, width, height, border, format, type, ImageData source);
 
     gl.texImage2D(
         gl.TEXTURE_2D,
@@ -254,7 +277,7 @@ const createBuffers = ({ gl, program }) => {
     gl.uniform3f(dirLightDirUniformLocation, 0.0, 0.0, -5.0);
     gl.uniform3f(dirLightIntUniformLocation, 0.9, 0.9, 0.9);
 
-    return { worldMatrix, matWorldLocation, index, texture };
+    return { worldMatrix, matWorldLocation, texture };
 };
 
 const render = ({ gl, worldMatrix, matWorldLocation, index, texture, angle }) => {
