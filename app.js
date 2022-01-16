@@ -1,46 +1,7 @@
 import cube from './primitives/cube.js';
 import torus from './primitives/torus.js';
 import plane from './primitives/plane.js';
-
-import { quat } from glMatrix;
-
-export const rotate = (obj, axis, r) => {
-    const quat = glMatrix.quat.create();
-    glMatrix.quat.setAxisAngle(quat, glMatrix.vec3.fromValues(axis[0], axis[1], axis[2]), r);
-
-    const rObj = new Array(obj.position.length / 3).fill({}).reduce((agg, curr, idx) => {
-        const p = glMatrix.vec3.fromValues(obj.position[idx * 3], obj.position[idx *3 + 1], obj.position[idx * 3 + 2]);
-        const rp = glMatrix.vec3.create();
-        glMatrix.vec3.transformQuat(rp, p, quat)
-
-        const n = glMatrix.vec3.fromValues(obj.normal[idx * 3], obj.normal[idx * 3 + 1], obj.normal[idx * 3 + 2]);
-        const rn = glMatrix.vec3.create();
-        glMatrix.vec3.transformQuat(rn, n, quat)
-
-        return {
-            position: agg.position.concat(...rp),
-            normal: agg.normal.concat(...rn),
-            uv: obj.uv,
-            index: obj.index,
-        }
-    }, { position: [], normal: [], uv: [], index: [] });
-
-    return rObj;
-}
-
-export const translate = (obj, v) => {
-    return {
-        ...obj,
-        position: obj.position.map((p, idx) => (p += v[idx % 3])),
-    }
-}
-
-export const scale = (obj, v) => {
-    return {
-        ...obj,
-        position: obj.position.map((p, idx) => (p *= v[idx % 3])),
-    }
-}
+import Object from './Object.js';
 
 const initialize = async () => {
     console.log('Initializing');
@@ -54,7 +15,7 @@ const initialize = async () => {
 
     const canvas = document.getElementById('glCanvas');
     /** @type {WebGLRenderingContext} */
-    const gl = canvas.getContext('webgl', {antialias: true});
+    const gl = canvas.getContext('webgl', { antialias: true });
 
     if (!gl) {
         console.log('WebGL not supported, falling back on experimental-webgl');
@@ -64,8 +25,6 @@ const initialize = async () => {
     if (!gl) {
         alert('Your browser does not support WebGL');
     }
-
-    //gl.viewport(0, 0, 200, 300);
 
     console.info(`[Canvas internal rendering] W: ${gl.drawingBufferWidth} | H: ${gl.drawingBufferHeight}`);
 
@@ -79,7 +38,7 @@ const initialize = async () => {
 
     const { program } = createShaders({ gl, vertexText, fragmentText });
     const { index } = createBuffers({ gl, program });
-    const { worldMatrix, matWorldLocation, texture } = createTexture({gl, program})
+    const { worldMatrix, matWorldLocation, texture } = createTexture({ gl, program });
     const { angle } = createEventListeners({ x: 0, y: 0 });
     render({ gl, worldMatrix, matWorldLocation, index, texture, angle });
 };
@@ -124,22 +83,19 @@ const createShaders = ({ gl, vertexText, fragmentText }) => {
 };
 
 const createBuffers = ({ gl, program }) => {
-    //
-    // Create buffer
-    //
-    const identityMatrix = new Float32Array(9);
-    glMatrix.mat3.identity(identityMatrix);
+    // create and transform objects as desired
+    const cube2 = new Object(cube);
+    cube2.scale([1, 4, 1]);
+    cube2.rotate([1,2,1], 1.2);
+    cube2.translate([1, 0, 0]);
+    console.log({ cube2 });
 
-    const sCube = scale(cube, [2, 1, 1]);
-    const rCube = rotate(sCube, [0, 0, 1], 1.2);
-    const tCube = translate(rCube, [1, 0.5, 0]);
+    const plane2 = new Object(plane);
+    plane2.scale([5, 5, 5]);
+    plane2.rotate([1, 0, 0], glMatrix.glMatrix.toRadian(270));
+    plane2.translate([0, -2, 0]);
 
-    const sPlane = scale(plane, [5, 5, 5]);
-    const rPlane = rotate(sPlane, [1, 0, 0], glMatrix.glMatrix.toRadian(270));
-    const tPlane = translate(rPlane, [0, -2, 0]);
-
-
-    const objects = [torus, tCube, tPlane];
+    const objects = [torus, cube2.obj, plane2.obj];
 
     // aggregate object params to create ultimately one buffer array
     const { position, normal, uv, index } = objects.reduce(
@@ -148,7 +104,7 @@ const createBuffers = ({ gl, program }) => {
                 position: [...agg.position, ...o.position],
                 normal: [...agg.normal, ...o.normal],
                 uv: [...agg.uv, ...o.uv],
-                index: [...agg.index, ...o.index.map((i) => (i + agg.position.length / 3))],
+                index: [...agg.index, ...o.index.map((i) => i + agg.position.length / 3)],
             };
         },
         { position: [], normal: [], uv: [], index: [] },
@@ -171,6 +127,10 @@ const createBuffers = ({ gl, program }) => {
             normal[i + 2],
         ];
     }, []);
+
+    //
+    // Create buffers
+    //
 
     const vertexBufferObject = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vertexBufferObject);
@@ -215,9 +175,9 @@ const createBuffers = ({ gl, program }) => {
     gl.enableVertexAttribArray(positionAttribLocation);
     gl.enableVertexAttribArray(texCoordAttribLocation);
     gl.enableVertexAttribArray(normalAttribLocation);
-    
+
     return { index };
-}
+};
 
 const createTexture = ({ gl, program }) => {
     // create the tex:
@@ -228,7 +188,7 @@ const createTexture = ({ gl, program }) => {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 
-    // void gl.texImage2D(target, level, internalformat, width, height, border, format, type, ImageData source);
+    // format: void gl.texImage2D(target, level, internalformat, width, height, border, format, type, ImageData source);
 
     gl.texImage2D(
         gl.TEXTURE_2D,
@@ -254,11 +214,12 @@ const createTexture = ({ gl, program }) => {
     glMatrix.mat4.lookAt(viewMatrix, [0, 2, -10], [0, 0, 0], [0, 1, 0]);
     glMatrix.mat4.perspective(
         projectionMatrix,
-        glMatrix.glMatrix.toRadian(45),
+        glMatrix.glMatrix.toRadian(50),
         gl.canvas.width / gl.canvas.height,
         0.1,
         1000,
     );
+
     // send uniforms to context
     gl.uniformMatrix4fv(matWorldLocation, gl.FALSE, worldMatrix);
     gl.uniformMatrix4fv(matViewLocation, gl.FALSE, viewMatrix);
